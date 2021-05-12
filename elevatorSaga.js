@@ -1,84 +1,105 @@
 {
     init: function(elevators, floors) {
 
+        //TODO if idle and empty, currentDirection = none?
         //Elevator
         //Elevator Events
-        //TODO handle elev lights
         elevators.forEach((thisElevator, index) => {
-            thisElevator.currentDirection = "up"
-            thisElevator.updateDirection = function updateElevatorDirection() {
-                this.currentDirection = (this.currentFloor() < this.destinationQueue[0]) ? "up" : "down";
-                console.log("updated elevator currentDirection: ",this.currentDirection)
+            thisElevator.currentDirection = ""
+            thisElevator.isEmpty = thisElevator.loadFactor() == "0" ? true : false;
+            thisElevator.isFull = thisElevator.loadFactor() == "1" ? true : false;
+            thisElevator.updateDirection = function () {
+                //this.currentDirection = (this.currentFloor() <= this.destinationQueue[0]) ? "up" : "down";
+                if (thisElevator.destinationQueue.length > 0) {
+                    if (thisElevator.currentFloor() <= thisElevator.destinationQueue[0]) {
+                        thisElevator.currentDirection = "up";
+                        thisElevator.goingUpIndicator(true);
+                        thisElevator.goingDownIndicator(false);
+                    }
+                    if (thisElevator.currentFloor() > thisElevator.destinationQueue[0]) {
+                        thisElevator.currentDirection = "down";
+                        thisElevator.goingUpIndicator(false);
+                        thisElevator.goingDownIndicator(true);
+                    }
+                } else {
+                    thisElevator.goingUpIndicator(true);
+                    thisElevator.goingDownIndicator(true);
+                }
             }
 
             thisElevator.on("idle", function() {
-                let queuedFloors = getQueues("all")
-                let currFloor = thisElevator.currentFloor()
-                console.log("Idle Elev ",index," QueuedFloors: ",queuedFloors," currFloor ",currFloor)
-                //if there's only 1 floor in the queue, go there
-                if (queuedFloors.length == 1 ) {
-                    thisElevator.goToFloor(queuedFloors,true)
-                }
-                if (queuedFloors.length > 2 ) {
-                    let closestQueuedFloor = findClosest(currFloor,queuedFloors)
-                    console.log("closest queued floor: ",closestQueuedFloor)
-                    thisElevator.goToFloor(closestQueuedFloor)
-                } else {
-                    thisElevator.goToFloor(0)
-                }
-                thisElevator.updateDirection()
-                console.log("Elev ",index," Updated with queued floor: ",thisElevator.destinationQueue)
             });
+
+            //TODO instead of the passing listeners, could/should we sort levels from the up/down queue into the destination queue here? See comment at top of file
             thisElevator.on("floor_button_pressed", function(floorNum) {
+                //if floor pressed is below the next destination AND currDir = up / opposite for down, then put destination on the end
+                let destinationQueue = thisElevator.destinationQueue;
                 console.log("Floor button pressed: ",floorNum," Elevator pressed floors: ",thisElevator.getPressedFloors());
                 thisElevator.goToFloor(floorNum)
                 if(thisElevator.currentDirection == "up") {
-                    //TODO instead of sort(), need to create function to sort with current lvl in mind; elev en floor3, direction=up,button pressed for 1; sort beginning with curr level instead of 0
-                    thisElevator.destinationQueue.sort()
+                    let arrUp = getFloorQueues("up")
+                    destinationQueue.sort()
+                    for (let i = 0; i < arrUp.length; i++){
+                        if (arrUp[i] > destinationQueue[destinationQueue.length-1]){
+                            thisElevator.goToFloor(arrUp[i]);
+                            console.log("Added floors to queue: ",destinationQueue)
+                        }
+                    }
                 } else if (thisElevator.currentDirection == "down") {
                     //TODO same as above
                     thisElevator.destinationQueue.reverse()
                 }
                 thisElevator.updateDirection();
-                console.log("destinationQueue after floor button push ",thisElevator.destinationQueue)
+                console.log("Elev ",index," destinationQueue after floor button push ",thisElevator.destinationQueue," Direction: ",thisElevator.currentDirection)
             });
 
-            //TODO stop on floor while passing if in destination queue (might not be needed anymore with queue sorting?)
-            //TODO stop on floor while padding if in correct direction and in floor queue
+            //Drop off or pick up if: floor is in destination queue or person is waiting and going in the same direction
             thisElevator.on("passing_floor", function(floorNum, direction) {
-                console.log("Passing: ",floorNum," direction: ",direction," floor upWaiting: ",floors[floorNum].upWaiting," floor downWaiting: ",floors[floorNum].downWaiting);
-                if (floors[floorNum].upWaiting && direction == "up") {
+                if (direction == "up" && (floors[floorNum].upWaiting || thisElevator.destinationQueue.includes(floorNum)) && !thisElevator.isFull) {
                     this.goToFloor(floorNum,true);
                     console.log("Up and up, new queue: ",thisElevator.destinationQueue)
-                } else if (floors[floorNum].downWaiting && direction == "down") {
+                }
+                if (direction == "down" && (floors[floorNum].downWaiting || thisElevator.destinationQueue.includes(floorNum)) && !thisElevator.isFull) {
                     this.goToFloor(floorNum,true);
                     console.log("Down and down, new queue: ",thisElevator.destinationQueue)
 
                 }
             })
+            //
             thisElevator.on("stopped_at_floor", function(floorNum) {
-                //console.log("Stopped on floor ",floorNum);
                 thisElevator.updateDirection();
+                console.log("Elev ",index," destinationQueue after floor button push ",thisElevator.destinationQueue," Direction: ",thisElevator.currentDirection)
                 clearFloorStatus(thisElevator.currentDirection,floorNum)
+                //printFloorQueues();
             })
-
         })
 
         //Floors
         //elevator and floor actions seperate
-        floors.forEach((thisFloor,i) => {
-                thisFloor.on("down_button_pressed", function() {
-                    thisFloor.downWaiting = true;
-                    console.log("Down button pressed on floor ",i," downWaiting: ",thisFloor.downWaiting)
-                    console.log("Down queue: ",getQueues("down"))
-                });
+        floors.forEach((thisFloor,floorNum) => {
+            thisFloor.upWaiting = false
+            thisFloor.downWaiting = false
 
-                thisFloor.on("up_button_pressed", function() {
-                    thisFloor.upWaiting = true;
-                    console.log("Up button pressed on floor ",i," upWaiting: ",thisFloor.upWaiting)
-                    console.log("Up queue: ",getQueues("up"))
-                });
+            thisFloor.on("down_button_pressed", function() {
+                thisFloor.downWaiting = true;
+                sendOpenElevator(floorNum)
             });
+
+            thisFloor.on("up_button_pressed", function() {
+                thisFloor.upWaiting = true;
+                console.log("Up button pressed on floor ",floorNum," upWaiting: ",thisFloor.upWaiting)
+                console.log("Up queue: ",getFloorQueues("up"))
+                for (let j = 0; j < elevators.length; j++) {
+                    console.log("Elev in loop ",j,"destinationQueue: ",elevators[j].destinationQueue)
+                    if (elevators[j].isEmpty && elevators[j].destinationQueue.length == 0) {
+                        console.log("Elev ",j," goToFloor ",floorNum)
+                        elevators[j].goToFloor(floorNum,true);
+                        thisFloor.upWaiting=false;
+                        break;
+                    }
+                }
+            });
+        });
 
         function clearFloorStatus(direction,floorNum){
             if (direction == "up") {
@@ -89,8 +110,7 @@
         }
 
         //Params: "up", "down", "all"
-        //Had a global array for the queue...but switched to use this get function instead; easier to maintain I think
-        function getQueues(direction) {
+        function getFloorQueues(direction) {
             let returnQueue = new Array()
             floors.forEach((floor,floorNum) => {
                 if (direction == "up" && floor.upWaiting) {
@@ -98,6 +118,7 @@
                 }
                 if (direction == "down" && floor.downWaiting) {
                     returnQueue.push(floorNum)
+                    returnQueue.reverse()
                 } else if (direction == "all" && (floor.downWaiting || floor.upWaiting)) {
                     returnQueue.push(floorNum)
                 }
@@ -116,12 +137,35 @@
             let highFloorDiff = Math.abs(highArr[0]-target)
             console.log("lowFloorDiff ",lowFloorDiff)
             console.log("highFloorDiff ",highFloorDiff)
-            if ((highFloorDiff) && highFloorDiff < lowFloorDiff) { return highFloorDiff }
-            if ((lowFloorDiff) && lowFloorDiff < highFloorDiff) { return lowFloorDiff }
+            if ((highFloorDiff) && highFloorDiff < lowFloorDiff) { return highArr[0] }
+            if ((lowFloorDiff) && lowFloorDiff < highFloorDiff) { return lowArr[0] }
             else  {
-                console.log("else....go to first in queue")
-                return getQueues("all")[0]
+                return 0
             }
+        }
+
+        function sendOpenElevator(floorNum) {
+            //start on the right instead of the left...helps things a tiny bit in the beginning
+            for (let j = 0; j < elevators.length; j++) {
+                console.log("Elev in loop ",j,"destinationQueue: ",elevators[j].destinationQueue)
+                if (elevators[j].isEmpty && elevators[j].destinationQueue.length == 0) {
+                    console.log("Elev ",j," is empty, no destinationQueue, goToFloor ",floorNum)
+                    elevators[j].goToFloor(floorNum,true);
+                    break;
+                }
+            }
+        }
+
+        function printDestinationQueues() {
+            elevators.forEach((elevator,i) => {
+                console.log("elevator ",i," direction: ",elevator.currentDirection," destinationQueue: ",elevator.destinationQueue)
+            })
+        }
+
+        function printFloorQueues() {
+            floors.forEach((floor,i) => {
+                console.log("Floor ",i," Up waiting: ",floor.upWaiting," Down waiting: ",floor.downWaiting)
+            })
         }
 
 
